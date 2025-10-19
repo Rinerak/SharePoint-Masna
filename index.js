@@ -1,15 +1,126 @@
 // Pozřeby bota - načítání a další
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const Imap = require('imap-simple');
 const { simpleParser } = require('mailparser');
+const fs = require('fs');
+const path = require('path');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+// Příkazy
+const commands = [
+  { name: 'oznameni-0', description: 'Vypne oznámení' },
+  { name: 'oznameni-1', description: 'Zapne oznámení' },
+  { name: 'status', description: 'Zobrazí stav bota' }
+];
+
+const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+async function registerCommands() {
+  try {
+    if (!process.env.CLIENT_ID) {
+      console.error('CLIENT_ID chybí v .env');
+      return;
+    }
+    if (process.env.GUILD_ID) {
+      await rest.put(
+        Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+        { body: commands }
+      );
+    } else {
+      await rest.put(
+        Routes.applicationCommands(process.env.CLIENT_ID),
+        { body: commands }
+      );
+    }
+  } catch (error) {
+    console.error('Chyba při registraci příkazů:', error);
+  }
+}
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName === 'oznameni-1') {
+    const channelId = interaction.channelId;
+    try {
+      const envPath = path.join(__dirname, '.env');
+      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+      const match = envContent.match(/^DISCORD_CHANNEL_ID=.*$/m);
+      let ids = [];
+      if (match) {
+        const value = match[0].split('=')[1].trim();
+        ids = value.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      if (!ids.includes(channelId)) {
+        ids.push(channelId);
+      }
+      const newLine = `DISCORD_CHANNEL_ID=${ids.join(',')}`;
+      if (match) {
+        envContent = envContent.replace(/^DISCORD_CHANNEL_ID=.*$/m, newLine);
+      } else {
+        if (envContent.length && !envContent.endsWith('\n')) envContent += '\n';
+        envContent += `${newLine}\n`;
+      }
+      fs.writeFileSync(envPath, envContent);
+      process.env.DISCORD_CHANNEL_ID = ids.join(',');
+      await interaction.reply(`Přidáno ID kanálu **${channelId}**.`);
+    } catch (err) {
+      console.error('Chyba zápisu .env:', err);
+      await interaction.reply('Nepodařilo se uložit ID kanálu do .env.');
+    }
+    return;
+  } 
+  if (interaction.commandName === 'oznameni-0') {
+    const channelId = interaction.channelId;
+    try {
+      const envPath = path.join(__dirname, '.env');
+      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+      const match = envContent.match(/^DISCORD_CHANNEL_ID=.*$/m);
+      if (!match) {
+        await interaction.reply('V .env zatím není žádný seznam kanálů.');
+        return;
+      }
+
+      const value = match[0].split('=')[1].trim();
+      let ids = value.split(',').map(s => s.trim()).filter(Boolean);
+      const beforeLen = ids.length;
+      ids = ids.filter(id => id !== channelId);
+
+      if (ids.length === beforeLen) {
+        await interaction.reply('Tento kanál v seznamu nebyl.');
+        return;
+      }
+
+      // Sestav novou hodnotu/odstran řádek pokud prázdné
+      if (ids.length === 0) {
+        envContent = envContent.replace(/^DISCORD_CHANNEL_ID=.*[\r\n]?/m, '');
+        // úklid dvojitých koncových řádků
+        envContent = envContent.replace(/\n+$/,'\n');
+        delete process.env.DISCORD_CHANNEL_ID;
+      } else {
+        const newLine = `DISCORD_CHANNEL_ID=${ids.join(',')}`;
+        envContent = envContent.replace(/^DISCORD_CHANNEL_ID=.*$/m, newLine);
+        process.env.DISCORD_CHANNEL_ID = ids.join(',');
+      }
+
+      fs.writeFileSync(envPath, envContent);
+      await interaction.reply(`Odebrán kanál ${channelId}. Zbývající: ${ids.join(', ') || 'žádné'}`);
+    } catch (err) {
+      console.error('Chyba zápisu .env:', err);
+      await interaction.reply('Nepodařilo se upravit .env.');
+    }
+  } 
+  if (interaction.commandName === 'status') {
+    await interaction.reply(`Běžím jako ${interaction.client.user.tag}`);
+  }
+});
+
 // Spustí se až se načte
-client.once('ready', () => {
+client.once('ready', async () => {
+  await registerCommands();
   console.log(`✅ Přihlášen jako ${client.user.tag}`);
 
   const config = {
@@ -72,13 +183,19 @@ client.once('ready', () => {
                 console.log("📌 CREATOR:", creator);
                 console.log("📌 MESSAGE:", message);
 
-                const channel = client.channels.cache.get(process.env.DISCORD_CHANNEL_ID);
-                if (channel) {
-                  channel.send(
-                    `█▀█ ▀█ █▄░█ ▄▀█ █▀▄▀█ █▀▀ █▄░█ █\n█▄█ █▄ █░▀█ █▀█ █░▀░█ ██▄ █░▀█ █\nZpráva:\n \n${message}
-                    \n@here`
-                  ); // Od: ${creator}\n 
-                }
+                const idsEnv = process.env.DISCORD_CHANNEL_ID || '';
+                const ids = idsEnv.split(',').map(s => s.trim()).filter(Boolean);
+                const payload = `█▀█ ▀█ █▄░█ ▄▀█ █▀▄▀█ █▀▀ █▄░█ █\n█▄█ █▄ █░▀█ █▀█ █░▀░█ ██▄ █░▀█ █\nZpráva:\n\n${message}\n@here`;
+
+                ids.forEach(id => {
+                  client.channels.fetch(id)
+                    .then(channel => {
+                      if (channel) {
+                        channel.send(payload); // Od: ${creator}
+                      }
+                    })
+                    .catch(err => console.error('❌ Chyba odesílání do kanálu', id, err));
+                });
               });
             });
           });
