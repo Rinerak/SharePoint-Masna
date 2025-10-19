@@ -1,6 +1,6 @@
 // Pozřeby bota - načítání a další
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, PermissionFlagsBits } = require('discord.js');
 const Imap = require('imap-simple');
 const { simpleParser } = require('mailparser');
 const fs = require('fs');
@@ -12,8 +12,8 @@ const client = new Client({
 
 // Příkazy
 const commands = [
-  { name: 'oznameni-0', description: 'Vypne oznámení' },
-  { name: 'oznameni-1', description: 'Zapne oznámení' },
+  { name: 'oznameni-0', description: 'Vypne oznámení', default_member_permissions: String(PermissionFlagsBits.Administrator) },
+  { name: 'oznameni-1', description: 'Zapne oznámení', default_member_permissions: String(PermissionFlagsBits.Administrator) },
   { name: 'status', description: 'Zobrazí stav bota' }
 ];
 
@@ -43,6 +43,12 @@ async function registerCommands() {
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
+  // Admin-only guard for oznameni commands
+  if ((interaction.commandName === 'oznameni-1' || interaction.commandName === 'oznameni-0') &&
+      !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+    await interaction.reply({ content: 'Tento příkaz mohou používat pouze administrátoři.', ephemeral: true });
+    return;
+  }
   if (interaction.commandName === 'oznameni-1') {
     const channelId = interaction.channelId;
     try {
