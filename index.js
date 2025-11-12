@@ -10,11 +10,32 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+// Global variable to store the ping role ID
+let pingRoleId = null;
+
 // Příkazy
 const commands = [
   { name: 'oznameni-0', description: 'Vypne oznámení', default_member_permissions: String(PermissionFlagsBits.Administrator) },
   { name: 'oznameni-1', description: 'Zapne oznámení', default_member_permissions: String(PermissionFlagsBits.Administrator) },
-  { name: 'status', description: 'Zobrazí stav bota' }
+  { name: 'status', description: 'Zobrazí stav bota' },
+  {
+    name: 'ping',
+    description: 'Ping a specific role',
+    options: [
+      {
+        name: 'role',
+        description: 'The role to ping',
+        type: 8, // ROLE type
+        required: true
+      },
+      {
+        name: 'message',
+        description: 'Optional message to include with the ping',
+        type: 3, // STRING type
+        required: false
+      }
+    ]
+  }
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -43,8 +64,34 @@ async function registerCommands() {
 
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  // Admin-only guard for oznameni commands
-  if ((interaction.commandName === 'oznameni-1' || interaction.commandName === 'oznameni-0') &&
+  
+  // Příkaz ping
+  if (interaction.commandName === 'ping') {
+    const role = interaction.options.getRole('role');
+    const message = interaction.options.getString('message') || '';
+    
+    // Kontrola oprávnění
+    if (!role.mentionable) {
+      return interaction.reply({
+        content: `❌ Nemám oprávnění pingovat ${role.name}. Ujisti se, že mám povolení tuto roli zmínit.`,
+        ephemeral: true
+      });
+    }
+    
+    // Uložení ID role
+    pingRoleId = role.id;
+    
+    // Potvrzení
+    await interaction.reply({ 
+      content: `✅ Role ${role} Je nyní nastavená pro zprávy.`,
+      allowedMentions: { roles: [] },
+      ephemeral: true
+    });
+    return;
+  }
+  
+  // Admin-only guard na příkazy
+  if ((interaction.commandName === 'oznameni-1' || interaction.commandName === 'oznameni-0' || interaction.commandName === 'ping') &&
       !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
     await interaction.reply({ content: 'Tento příkaz mohou používat pouze administrátoři.', ephemeral: true });
     return;
@@ -72,7 +119,7 @@ client.on('interactionCreate', async interaction => {
       }
       fs.writeFileSync(envPath, envContent);
       process.env.DISCORD_CHANNEL_ID = ids.join(',');
-      await interaction.reply(`Přidáno ID kanálu **${channelId}**.`);
+      await interaction.reply(`Přidáno ID kanálu **${channelId}**. Nyní sem budeš dostávat oznámení`);
     } catch (err) {
       console.error('Chyba zápisu .env:', err);
       await interaction.reply('Nepodařilo se uložit ID kanálu do .env.');
@@ -191,7 +238,8 @@ client.once('ready', async () => {
 
                 const idsEnv = process.env.DISCORD_CHANNEL_ID || '';
                 const ids = idsEnv.split(',').map(s => s.trim()).filter(Boolean);
-                const payload = `█▀█ ▀█ █▄░█ ▄▀█ █▀▄▀█ █▀▀ █▄░█ █\n█▄█ █▄ █░▀█ █▀█ █░▀░█ ██▄ █░▀█ █\nZpráva:\n\n${message}\n@here`;
+                const roleMention = pingRoleId ? `<@&${pingRoleId}>` : '@here';
+                const payload = `█▀█ ▀█ █▄░█ ▄▀█ █▀▄▀█ █▀▀ █▄░█ █\n█▄█ █▄ █░▀█ █▀█ █░▀░█ ██▄ █░▀█ █\nZpráva:\n\n${message}\n${roleMention}`;
 
                 ids.forEach(id => {
                   client.channels.fetch(id)
